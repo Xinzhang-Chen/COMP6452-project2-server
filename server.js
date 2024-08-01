@@ -18,7 +18,6 @@ const contractSchema = new mongoose.Schema({
   dueTime: Number,
   email: String,
 });
-
 const Contract = mongoose.model('Contract', contractSchema);
 
 // Connect to MongoDB Atlas
@@ -88,6 +87,34 @@ function setUpContractActivated(contract) {
   });
 }
 
+// Function to listen for events
+function listenForEvents() {
+  console.log('Start to listen for events');
+  if (contract && contract.events) {
+    setUpContractActivated(contract);
+
+    // Not enabled by default, it will send an email to the borrower when the contract is funded
+    // setUpContractFunded(contract);
+  } else {
+    console.error('Error: contract not initialized');
+  }
+}
+
+app.listen(port, () => {
+  console.log(`Server is running on http://localhost:${port}`);
+  initializeContract();
+
+  // Not enabled by default, it will check the due time
+  // If the due time is passed, it will deactivate the contract
+  // setInterval(checkDueTime, 10000000);
+});
+
+// ====================================================================================
+// Functions that are not enabled by default
+
+// Function to set up event listeners for the contract funded event
+// It will send an email to the borrower when the contract is funded
+// Then the borrower can pull the fund from the contract
 function setUpContractFunded(contract) {
   contract.events.ContractFunded({ fromBlock: 'latest' }).on('data', async (event) => {
     const contractAddress = event.returnValues.contractAddress;
@@ -110,31 +137,9 @@ function setUpContractFunded(contract) {
   });
 }
 
-function listenForEvents() {
-  console.log('Start to listen for events');
-  if (contract && contract.events) {
-    setUpContractActivated(contract);
-    // setUpContractFunded(contract);
-  } else {
-    console.error('Error: contract not initialized');
-  }
-}
-
-async function updateContractStatus(contractToUpdate) {
-  try {
-    const gasEstimate = await contract.methods.deactivateContract(contractToUpdate).estimateGas({ from: accounts[0] });
-
-    const result = await contract.methods.deactivateContract(contractToUpdate).send({
-      from: accounts[0],
-      gas: gasEstimate,
-    });
-    return result;
-  } catch (error) {
-    console.error("Failed to update contract's flag:", error);
-    throw error;
-  }
-}
-
+// Function to check the due time of the contracts
+// If the due time is passed, it will deactivate the contract
+// And remove the contract from the database
 async function checkDueTime() {
   console.log('Checking due time');
   const currentTime = Date.now();
@@ -160,8 +165,42 @@ async function checkDueTime() {
   }
 }
 
-app.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`);
-  initializeContract();
-  setInterval(checkDueTime, 3000);
-});
+// Function to update the contract's status to inactive
+// It will call the deactivateContract function in the contract
+async function updateContractStatus(contractToUpdate) {
+  try {
+    const gasEstimate = await contract.methods.deactivateContract(contractToUpdate).estimateGas({ from: accounts[0] });
+
+    const result = await contract.methods.deactivateContract(contractToUpdate).send({
+      from: accounts[0],
+      gas: gasEstimate,
+    });
+    return result;
+  } catch (error) {
+    console.error("Failed to update contract's flag:", error);
+    throw error;
+  }
+}
+
+// Function to set up event listeners for the contract funded event
+function setUpContractFunded(contract) {
+  contract.events.ContractFunded({ fromBlock: 'latest' }).on('data', async (event) => {
+    const contractAddress = event.returnValues.contractAddress;
+
+    // MongoDB find the email address for this specific contractAddress
+    const emailAddress = await Contract.findOne({ newContract: contractAddress });
+
+    const mailOptions = {
+      from: 'Defi APP',
+      to: emailAddress,
+      subject: 'Your borrow contract is activated and the fund is ready',
+      text: `Hi there, your contract ${contractAddress} is activated and the fund is ready. please pull from the contract contract`,
+    };
+    emailInstance.transporter.sendMail(mailOptions, (error, info) => {
+      if (error) {
+        console.error('Error sending email:', error);
+      }
+      console.log('Email sent:', info);
+    });
+  });
+}
